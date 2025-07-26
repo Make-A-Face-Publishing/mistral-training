@@ -29,7 +29,8 @@ class TrainingConfig(BaseModel):
     model_name: str = Field(default="mistralai/Mistral-7B-v0.3")
     output_dir: Path = Field(default=Path("./mistral_base_finetuned"))
     data_dir: Path = Field(default=Path("literotica_dataset"))
-    train_split: float = Field(default=0.95)  # 95% for training, 5% for eval
+    max_train_samples: int = Field(default=20000)  # Limit training samples
+    max_eval_samples: int = Field(default=2000)   # Limit eval samples
     max_seq_length: int = Field(default=8192)  # Full context length
     
     # Batch size configuration
@@ -92,7 +93,7 @@ def setup_environment():
         gc.collect()
 
 
-def load_and_process_data(data_dir: Path, tokenizer, max_length: int, train_split: float = 0.95):
+def load_and_process_data(data_dir: Path, tokenizer, max_length: int, max_train_samples: int = 20000, max_eval_samples: int = 2000):
     """Load and tokenize HuggingFace dataset for base model training"""
     print(f"Loading dataset from {data_dir}...")
     
@@ -119,10 +120,26 @@ def load_and_process_data(data_dir: Path, tokenizer, max_length: int, train_spli
     
     print(f"Total texts loaded: {len(all_data)}")
     
-    # Split into train/eval
-    split_idx = int(len(all_data) * train_split)
-    train_texts = all_data[:split_idx]
-    eval_texts = all_data[split_idx:]
+    # Randomly sample training and eval data
+    import random
+    random.seed(42)  # For reproducibility
+    
+    # Shuffle all data
+    indices = list(range(len(all_data)))
+    random.shuffle(indices)
+    
+    # Take samples for train and eval
+    total_needed = max_train_samples + max_eval_samples
+    if len(all_data) < total_needed:
+        print(f"Warning: Dataset has {len(all_data)} samples but {total_needed} requested")
+        max_train_samples = min(max_train_samples, len(all_data) - max_eval_samples)
+        max_eval_samples = min(max_eval_samples, len(all_data) - max_train_samples)
+    
+    train_indices = indices[:max_train_samples]
+    eval_indices = indices[max_train_samples:max_train_samples + max_eval_samples]
+    
+    train_texts = [all_data[i] for i in train_indices]
+    eval_texts = [all_data[i] for i in eval_indices]
     
     print(f"Train samples: {len(train_texts)}")
     print(f"Eval samples: {len(eval_texts)}")
@@ -260,13 +277,14 @@ def train_model(config: TrainingConfig):
     for param in model.parameters():
         param.requires_grad = True
     
-    # Load datasets from parquet files
+    # Load datasets with sampling
     print("Loading and processing training data...")
     train_dataset, eval_dataset = load_and_process_data(
         config.data_dir, 
         tokenizer, 
         config.max_seq_length,
-        config.train_split
+        config.max_train_samples,
+        config.max_eval_samples
     )
     
     print(f"Training samples: {len(train_dataset)}")
@@ -442,7 +460,8 @@ def main():
     print(f"  Learning rate: {config.learning_rate}")
     print(f"  Epochs: {config.num_train_epochs}")
     print(f"  Data directory: {config.data_dir}")
-    print(f"  Train/eval split: {config.train_split:.1%}/{1-config.train_split:.1%}")
+    print(f"  Max train samples: {config.max_train_samples:,}")
+    print(f"  Max eval samples: {config.max_eval_samples:,}")
     print(f"  Base model training: {not config.mask_prompt_loss}")
     
     # Estimate memory usage
