@@ -1,0 +1,26 @@
+[project]
+name = "mistral-training"
+version = "0.1.0"
+description = "Training pipeline for fine-tuning Mistral models on creative writing datasets"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.7.0",
+    "transformers>=4.53.0",
+    "datasets>=4.0.0",
+    "pydantic>=2.11.0",
+    "pandas>=2.3.0",
+    "numpy>=2.3.0",
+    "accelerate>=1.9.0",
+    "flash-attn>=2.8.0",
+    "safetensors>=0.5.0",
+    "sentencepiece>=0.2.0",
+    "protobuf>=6.31.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = []
