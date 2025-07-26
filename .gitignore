@@ -136,3 +136,4 @@ full_finetuned_model/
 .DS_Store
 .vscode/
 .idea/llama.cpp/
+CLAUDE.md

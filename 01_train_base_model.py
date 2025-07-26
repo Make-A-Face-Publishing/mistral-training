@@ -93,22 +93,29 @@ def setup_environment():
 
 
 def load_and_process_data(data_dir: Path, tokenizer, max_length: int, train_split: float = 0.95):
-    """Load and tokenize parquet data for base model training"""
-    print(f"Loading parquet files from {data_dir}...")
+    """Load and tokenize HuggingFace dataset for base model training"""
+    print(f"Loading dataset from {data_dir}...")
     
-    # Load all parquet files from the directory
-    parquet_files = list(data_dir.glob("*.parquet"))
-    if not parquet_files:
-        raise ValueError(f"No parquet files found in {data_dir}")
-    
-    print(f"Found {len(parquet_files)} parquet files")
-    
-    # Load all parquet files into a single dataset
-    all_data = []
-    for parquet_file in parquet_files:
-        df = pd.read_parquet(parquet_file)
-        print(f"Loaded {len(df)} rows from {parquet_file.name}")
-        all_data.extend(df["text"].tolist())
+    # Check if this is a HuggingFace datasets format
+    dataset_path = data_dir / "taozi555___literotica-stories"
+    if dataset_path.exists():
+        print("Found HuggingFace dataset format")
+        # Load using datasets library
+        dataset = load_dataset(str(dataset_path), split="train")
+        print(f"Loaded {len(dataset)} samples from HuggingFace dataset")
+        all_data = dataset["text"]
+    else:
+        # Fallback to parquet files
+        parquet_files = list(data_dir.glob("*.parquet"))
+        if not parquet_files:
+            raise ValueError(f"No dataset found in {data_dir}. Expected HuggingFace dataset or parquet files.")
+        
+        print(f"Found {len(parquet_files)} parquet files")
+        all_data = []
+        for parquet_file in parquet_files:
+            df = pd.read_parquet(parquet_file)
+            print(f"Loaded {len(df)} rows from {parquet_file.name}")
+            all_data.extend(df["text"].tolist())
     
     print(f"Total texts loaded: {len(all_data)}")
     
@@ -176,14 +183,38 @@ def train_model(config: TrainingConfig):
     
     print(f"Loading model: {config.model_name}")
     
+    # Check if model is already cached
+    cache_dir = Path("/workspace/train/cache")
+    model_cache_path = cache_dir / f"models--{config.model_name.replace('/', '--')}"
+    if model_cache_path.exists():
+        print(f"✓ Model found in cache: {model_cache_path}")
+    else:
+        print(f"Model not cached, will download to: {cache_dir}")
+    
     # Load tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(
-        config.model_name,
-        trust_remote_code=True,
-        padding_side="left",  # Important for batch generation
-        token=os.environ.get("HF_TOKEN"),
-        cache_dir="/workspace/train/cache"
-    )
+    try:
+        # Try loading from cache first
+        tokenizer = AutoTokenizer.from_pretrained(
+            config.model_name,
+            trust_remote_code=True,
+            padding_side="left",  # Important for batch generation
+            token=os.environ.get("HF_TOKEN"),
+            cache_dir="/workspace/train/cache",
+            local_files_only=model_cache_path.exists()
+        )
+        if model_cache_path.exists():
+            print("✓ Tokenizer loaded from cache")
+    except Exception as e:
+        if model_cache_path.exists():
+            print(f"Cache load failed, downloading: {e}")
+        # Fallback to download
+        tokenizer = AutoTokenizer.from_pretrained(
+            config.model_name,
+            trust_remote_code=True,
+            padding_side="left",
+            token=os.environ.get("HF_TOKEN"),
+            cache_dir="/workspace/train/cache"
+        )
     
     # Ensure pad token is set
     if tokenizer.pad_token is None:
@@ -191,15 +222,33 @@ def train_model(config: TrainingConfig):
         tokenizer.pad_token_id = tokenizer.eos_token_id
     
     # Load model in BF16
-    model = AutoModelForCausalLM.from_pretrained(
-        config.model_name,
-        torch_dtype=torch.bfloat16,
-        device_map="auto",
-        trust_remote_code=True,
-        attn_implementation="flash_attention_2" if config.use_flash_attention else "eager",
-        token=os.environ.get("HF_TOKEN"),
-        cache_dir="/workspace/train/cache"
-    )
+    try:
+        # Try loading from cache first
+        model = AutoModelForCausalLM.from_pretrained(
+            config.model_name,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+            trust_remote_code=True,
+            attn_implementation="flash_attention_2" if config.use_flash_attention else "eager",
+            token=os.environ.get("HF_TOKEN"),
+            cache_dir="/workspace/train/cache",
+            local_files_only=model_cache_path.exists()
+        )
+        if model_cache_path.exists():
+            print("✓ Model loaded from cache")
+    except Exception as e:
+        if model_cache_path.exists():
+            print(f"Cache load failed, downloading: {e}")
+        # Fallback to download
+        model = AutoModelForCausalLM.from_pretrained(
+            config.model_name,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+            trust_remote_code=True,
+            attn_implementation="flash_attention_2" if config.use_flash_attention else "eager",
+            token=os.environ.get("HF_TOKEN"),
+            cache_dir="/workspace/train/cache"
+        )
     
     # Enable gradient checkpointing to save memory
     if config.gradient_checkpointing:
